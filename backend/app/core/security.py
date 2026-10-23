@@ -45,6 +45,8 @@ async def verify_supabase_token(token: str) -> UserAuthPayload:
                 full_name=user_meta.get("full_name"),
                 institution_name=user_meta.get("institution_name"),
                 regional_office=user_meta.get("regional_office"),
+                access_token=token,
+                is_mock=True,
             )
         except jwt.ExpiredSignatureError:
             raise HTTPException(
@@ -90,6 +92,8 @@ async def verify_supabase_token(token: str) -> UserAuthPayload:
                     full_name=user_meta.get("full_name"),
                     institution_name=user_meta.get("institution_name"),
                     regional_office=user_meta.get("regional_office"),
+                    access_token=token,
+                    is_mock=False,
                 )
             elif res.status_code == 401:
                 raise HTTPException(

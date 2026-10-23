@@ -167,3 +167,149 @@ npm run dev
 - [x] Public health endpoint (`/api/health`) remains unhindered.
 - [x] All 9 backend pytest tests and frontend role unit tests pass.
 - [x] Next.js production build (`npm run build`) completes with zero errors.
+
+---
+
+## 6. Module 3: Application Intake & Statutory Workflow Setup
+
+Module 3 provisions the statutory application models and workflow state machine for technical institution approvals.
+
+### Step 6.1: Database Migration
+Execute the additive migration in the Supabase SQL Editor:
+```
+supabase/migrations/20261023000001_core_applications_workflow.sql
+```
+This adds:
+- `institutions`, `institution_memberships`, `applications`, and `application_workflow_history`.
+- Hardened RLS policies ensuring applicant institutional isolation and regulatory reviewer visibility.
+- Triggers protecting immutable application reference numbers and enforcing append-only workflow audit logs.
+
+### Step 6.2: Running the Module 3 Automated Test Suites
+```powershell
+Set-Location -Path "d:\AICTE-Approval-Intelligence\backend"
+
+# Run the 29-test backend suite
+uv run pytest -v
+```
+
+### Step 6.3: Testing the Application Intake Wizard
+1. Sign in as an applicant representative at `http://localhost:3000/login`.
+2. Navigate to **Applications** (`http://localhost:3000/applications`).
+3. Click **New Application Intake** to launch the 5-step wizard (`http://localhost:3000/applications/new`).
+4. Select category (`New Institute`, `Extension of Approval`, or `Course Addition`), input details, save draft, and submit.
+5. Inspect the generated permanent reference (`AICTE-2026-APP-XXXXX`) and chronological audit timeline in the Application Dossier (`http://localhost:3000/applications/[id]`).
+
+---
+
+## 7. Module 4: Secure Document Management, Storage & Cleanup Worker Guide
+
+Module 4 adds private Supabase Storage integration, PDF structural integrity validation, SHA-256 persistence, outbox-pattern durable file deletion, and regulatory scrutiny review workflows.
+
+### Step 7.1: Backend Environment Configuration
+Ensure `backend/.env` contains the required keys:
+
+```ini
+ENVIRONMENT=development
+API_V1_STR=/api
+SUPABASE_URL="https://tgtksnkagptxnelyctdc.supabase.co"
+SUPABASE_PUBLISHABLE_KEY="your-anon-key"
+SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"  # REQUIRED for durable storage cleanup worker & download streaming
+SUPABASE_JWT_SECRET="your-supabase-jwt-secret"
+```
+
+> [!CAUTION]
+> `SUPABASE_SERVICE_ROLE_KEY` must **NEVER** be placed in `frontend/.env`, client bundles, or frontend environment variables! It is strictly backend-only.
+
+### Step 7.2: Running the Automated Test Suites
+Run the dedicated Module 4 tests and full backend regression suite from Windows PowerShell:
+
+```powershell
+Set-Location -Path "d:\AICTE-Approval-Intelligence\backend"
+
+# 1. Run database schema & AST security audit tests (44 tests)
+uv run pytest tests/test_document_management_schema.py -v
+
+# 2. Run API endpoints & workflow state protection tests (15 tests)
+uv run pytest tests/test_document_endpoints.py -v
+
+# 3. Run full backend regression suite (116 passed tests)
+uv run pytest tests/ -v
+```
+
+### Step 7.3: Running the Durable Storage Cleanup Worker Locally
+The cleanup worker operates asynchronously on the durable PostgreSQL outbox queue (`public.document_storage_deletion_queue`) without executing direct SQL `DELETE` on Supabase `storage.objects`.
+
+```powershell
+Set-Location -Path "d:\AICTE-Approval-Intelligence\backend"
+
+# Display CLI options and usage
+uv run python -m app.worker --help
+
+# Process currently pending deletion items once and exit (ideal for cron or test verification)
+uv run python -m app.worker --once
+
+# Continuous polling daemon mode (polling every 30 seconds with 5-minute crash-recovery leases)
+uv run python -m app.worker --interval 30 --batch-size 50 --lease-seconds 300
+```
+
+### Step 7.4: Production Scheduler & Worker Deployment
+In production, run the worker as an isolated scheduled task or daemon rather than embedding an unmanaged thread in each FastAPI web worker:
+
+1. **Systemd Service (Linux/Ubuntu VM):**
+   ```ini
+   [Unit]
+   Description=AICTE Document Storage Deletion Worker
+   After=network.target
+
+   [Service]
+   Type=simple
+   User=aicte
+   WorkingDirectory=/opt/aicte/backend
+   ExecStart=/root/.cargo/bin/uv run python -m app.worker --interval 30 --batch-size 50
+   Restart=on-failure
+   RestartSec=10
+   EnvironmentFile=/opt/aicte/backend/.env
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+2. **Cron Execution (Every 5 minutes):**
+   ```bash
+   */5 * * * * cd /opt/aicte/backend && /root/.cargo/bin/uv run python -m app.worker --once >> /var/log/aicte-worker.log 2>&1
+   ```
+
+3. **Cloud Run / Container Job:**
+   Invoke the container entry point: `python -m app.worker --once`.
+
+### Step 7.5: Frontend Production Build & UI Verification
+```powershell
+Set-Location -Path "d:\AICTE-Approval-Intelligence\frontend"
+
+# Compile Next.js 16 production build
+npm run build
+```
+
+### Step 7.6: Manual Walkthrough Procedure
+1. **Applicant Document Upload & Checklist:**
+   - Log in as an applicant representative.
+   - Navigate to `/applications/[id]` and click the **Statutory Documents & Scrutiny** tab.
+   - View the AICTE APH Statutory Document Checklist card showing required vs missing items.
+   - Click **Upload Document**, pick category (e.g. `Registered Land Deed`), select a valid PDF file, and submit.
+   - Verify that the table updates with safe display filename, size, and SHA-256 hash.
+   - Click the **Download** action to verify streaming retrieval.
+
+2. **Uploader Document Deletion:**
+   - In draft state, click the **Trash** icon to delete the uploaded document.
+   - Confirm that the row is removed from metadata and enqueued into `document_storage_deletion_queue`.
+   - Run `uv run python -m app.worker --once` to process the binary deletion.
+
+3. **Reviewer Document Scrutiny:**
+   - Log in as a Regulatory Scrutiny Officer (`regional_scrutiny_officer`).
+   - Navigate to `/applications/[id]`, switch to the **Statutory Documents & Scrutiny** tab.
+   - Click the **Shield** icon next to any document to launch the scrutiny modal.
+   - Select `Verified Valid`, `Deficiency Flagged`, or `Rejected`.
+   - For deficiencies or rejections, enter official statutory remarks and submit.
+   - Confirm that the status badge updates and non-repudiation stamps the officer's ID and timestamp.
+
+

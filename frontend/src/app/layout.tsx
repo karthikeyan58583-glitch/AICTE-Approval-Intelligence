@@ -1,8 +1,10 @@
+import React, { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { AppShell } from '@/components/layout/AppShell';
 import { AuthProvider } from '@/lib/auth/AuthContext';
+
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -32,7 +34,9 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col font-sans">
         <AuthProvider>
-          <AppShell>{children}</AppShell>
+          <Suspense fallback={null}>
+            <AppShell>{children}</AppShell>
+          </Suspense>
         </AuthProvider>
       </body>
     </html>

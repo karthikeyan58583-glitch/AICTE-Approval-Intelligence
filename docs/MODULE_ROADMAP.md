@@ -12,7 +12,7 @@ To provide clear executive visibility while preserving granular engineering mile
 | :--- | :--- | :--- | :--- |
 | **Phase 1** | Project Foundation & Shell | **Module 1**: Project Foundation, Monorepo & Enterprise Application Shell | **Completed (Module 1)** |
 | **Phase 2** | Identity, Security & RBAC | **Module 2**: Supabase Auth Integration & Session Governance<br>**Module 3**: Role-Based Access Control (RBAC), SQL RLS Policies & FastAPI Security | **Completed (Module 2)** |
-| **Phase 3** | Intake & Workflow Engine | **Module 4**: Institutional Application Intake Wizards & Document Slots<br>**Module 5**: Statutory Approval State Machine & Audit Trail Transitions | Planned (Module 3) |
+| **Phase 3** | Intake & Workflow Engine | **Module 4**: Institutional Application Intake Wizards & Document Slots<br>**Module 5**: Statutory Approval State Machine & Audit Trail Transitions | **Completed (Module 3)** |
 | **Phase 4** | AI Document Intelligence | **Module 6**: Multi-Format Document Ingestion & High-Fidelity OCR<br>**Module 7**: Cross-Document Discrepancy & Deficiency Engine<br>**Module 8**: Evidence Linking & Bounding-Box Visual Inspection Workspace | Planned (Module 4) |
 | **Phase 5** | Bottleneck Analytics | **Module 9**: Stage Duration Telemetry & Regional Queue Sizing<br>**Module 10**: Explainable Root-Cause Delay Attribution & SLA Predictive Modeling<br>**Module 11**: EVC Inspection & Hearing Committee Scheduling Optimizer | Planned (Module 5) |
 | **Phase 6** | Compliance & Alerts | **Module 12**: Automated Threshold Evaluation (Cadastral, Carpet, Faculty Ratios)<br>**Module 13**: Escalation Ladders & Multi-Channel Alert Dispatcher (In-app, SMS, Email) | Planned (Module 6) |
@@ -49,21 +49,52 @@ To provide clear executive visibility while preserving granular engineering mile
 
 ---
 
-### ⏳ Module 3: Application Intake & Approval State Machine (Phase 3)
-- Dynamic approval workflow models matching the AICTE Approval Process Handbook (APH).
-- State transitions: `Submitted` ➔ `Scrutiny` ➔ `Deficiency Notice` ➔ `EVC Inspection` ➔ `SAC Review` ➔ `Approval / Rejection`.
-- Multi-step application intake wizards for new institution approvals, intake capacity expansions, and course additions.
-- Immutable audit log tracking timestamped status changes and officer notes.
+### ✅ Module 3: Application Intake Wizards, Core Data Model & Statutory Workflow (Phase 3)
+- **Core Entities & Additive Migration (`20261023000001_core_applications_workflow.sql`)**:
+  - `institutions`, `institution_memberships`, `applications`, and `application_workflow_history`.
+  - Hardened `SECURITY DEFINER` helpers (`is_institution_member`, `is_regulatory_reviewer`) with `SET search_path = ''` and revoked execute from PUBLIC.
+  - Anti-tampering triggers protecting application immutability and enforcing append-only workflow audit logs.
+- **Three Regulated Application Categories**:
+  - Establishment of New Technical Institute (`new_institute` / LoA).
+  - Extension of Approval (`extension_of_approval` / EoA).
+  - Introduction of New Course / Program (`course_addition`).
+- **Statutory Workflow State Machine (10 States)**:
+  - `draft` ➔ `submitted` ➔ `regional_scrutiny` ➔ `deficiency_resolution` (rectification loop) ➔ `evc_evaluation` ➔ `sac_review` ➔ `shc_hearing` ➔ `approved` / `rejected` / `withdrawn`.
+  - Server-authoritative transition authorization and validation.
+- **Client & Fast API Integration**:
+  - Real `/applications` directory with search, type/status filters, and metrics.
+  - Multi-step `/applications/new` intake wizard with live client validation, server validation, draft autosave/recovery, and unique reference generation (`AICTE-2026-APP-XXXXX`).
+  - Comprehensive `/applications/[id]` dossier view with interactive stage tracker, deficiency resolution response, officer transition modals, and chronological audit timeline.
+- **Automated Verification**:
+  - 29 backend tests passing (including workflow lifecycle and SQL AST tests).
+  - Zero TypeScript compiler errors; Next.js 16 production build passing.
 
 ---
 
-### ⏳ Module 4: AI-Powered Document Intelligence (Phase 4 — Core Innovation 1)
-- Multi-format ingestion pipeline (PDF, scanned affidavits, building plans, land conversion certificates, FDR guarantees).
-- OCR engine with structured key-value extraction and table understanding.
-- Discrepancy & Deficiency Engine:
-  - Cross-document validation (e.g. land area declared vs. revenue certificate vs. surveyor diagram).
-  - Building carpet area vs. approved student intake ratio compliance.
-- **Evidence-Linked Inspection**: Deep-linking extracted attributes to visual bounding boxes on source PDF documents for verifiable human oversight.
+### ✅ Module 4: Secure Document Management & Regulatory Evidence (Phase 4)
+- **Dedicated Private Supabase Storage**:
+  - Private bucket `aip-application-documents` with 10 MiB limit and PDF allowlist.
+  - Server-controlled paths (`{application_id}/{uuid}.pdf`) preventing path traversal and object collisions.
+- **Authoritative Database Metadata & Immutability**:
+  - `public.application_documents` metadata table with persisted SHA-256 integrity hash (`file_hash_sha256`).
+  - Trigger `tr_protect_document_metadata_mutation` safeguarding upload timestamps, file sizes, and storage paths.
+- **Durable Deletion Outbox Queue & Worker**:
+  - `public.document_storage_deletion_queue` populated via trigger `tr_enqueue_document_storage_deletion`.
+  - Zero SQL deletes against Supabase `storage.objects`.
+  - `DocumentStorageCleanupWorker` with lease-based crash recovery, 404 idempotent handling, exponential retries, and standalone CLI runner (`python -m app.worker`).
+- **PDF Signature & Structural Validation**:
+  - Enforced `%PDF-` magic byte signature checking.
+  - Structural validation via `pypdf` rejecting corrupt, truncated, or 0-page files.
+  - Streaming download with safe `Content-Disposition`, `X-Content-Type-Options: nosniff`, and application-level access authorization.
+- **Frontend Integration**:
+  - Tabbed Document Management section in `/applications/[id]`.
+  - AICTE APH Statutory Document Checklist card with completeness indicators.
+  - Categorized upload modal with live drag/drop and client validation.
+  - Officer scrutiny modal for `verified_valid`, `deficiency_flagged`, and `rejected` determinations with non-repudiation stamping.
+- **Automated Verification**:
+  - 116 backend tests passing (including schema, AST, API endpoints, workflow state protection, and worker tests).
+  - Next.js 16 production build passing with 0 errors across all 20 routes.
+
 
 ---
 

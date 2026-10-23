@@ -85,3 +85,112 @@ def test_updated_at_column_is_timestamptz_and_trigger_assigns_now():
     assert "updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.now()" in sql
     assert "NEW.updated_at := pg_catalog.now();" in sql
 
+
+def load_module_3_migration_sql() -> str:
+    migration_path = Path(__file__).resolve().parents[2] / "supabase" / "migrations" / "20261023000001_core_applications_workflow.sql"
+    assert migration_path.exists(), f"Module 3 migration file not found at {migration_path}"
+    return migration_path.read_text(encoding="utf-8")
+
+
+def test_module_3_migration_parses_cleanly_with_c_parser():
+    """Verify that Module 3 migration passes PostgreSQL native C parser without syntax errors."""
+    sql = load_module_3_migration_sql()
+    tree = pglast.parse_sql(sql)
+    assert len(tree) >= 40, f"Expected at least 40 SQL statements in Module 3 migration, got {len(tree)}"
+
+
+def test_module_3_all_security_definer_functions_set_empty_search_path():
+    """Verify that all SECURITY DEFINER functions in Module 3 set search_path = ''."""
+    sql = load_module_3_migration_sql()
+    assert "CREATE OR REPLACE FUNCTION public.is_institution_member(" in sql
+    assert "CREATE OR REPLACE FUNCTION public.is_regulatory_reviewer()" in sql
+    assert "CREATE OR REPLACE FUNCTION public.protect_application_mutation()" in sql
+    assert "CREATE OR REPLACE FUNCTION public.prevent_workflow_history_tampering()" in sql
+    # Count occurrences of SET search_path = ''
+    assert sql.count("SET search_path = ''") >= 4
+
+
+def test_module_3_audit_triggers_enforce_append_only_and_protect_immutability():
+    """Verify that triggers enforce immutability of application reference & append-only history."""
+    sql = load_module_3_migration_sql()
+    # History append-only trigger
+    assert "Application workflow history entries are permanent audit records" in sql
+    assert "prevent_workflow_history_tampering" in sql
+    # Application mutation protection trigger
+    assert "Application reference number is immutable once generated." in sql
+    assert "Application cannot be re-assigned to a different institution." in sql
+    assert "Application ownership cannot be altered." in sql
+
+
+def test_module_3_rls_enabled_on_all_tables():
+    """Verify Row Level Security is explicitly enabled on all Module 3 tables."""
+    sql = load_module_3_migration_sql()
+    assert "ALTER TABLE public.institutions ENABLE ROW LEVEL SECURITY;" in sql
+    assert "ALTER TABLE public.institution_memberships ENABLE ROW LEVEL SECURITY;" in sql
+    assert "ALTER TABLE public.applications ENABLE ROW LEVEL SECURITY;" in sql
+    assert "ALTER TABLE public.application_workflow_history ENABLE ROW LEVEL SECURITY;" in sql
+
+
+def test_module_3_execution_privileges_revoked_from_public():
+    """Verify least privilege: EXECUTE on all Module 3 functions is revoked from PUBLIC."""
+    sql = load_module_3_migration_sql()
+    assert "REVOKE EXECUTE ON FUNCTION public.is_institution_member(UUID) FROM PUBLIC;" in sql
+    assert "REVOKE EXECUTE ON FUNCTION public.is_regulatory_reviewer() FROM PUBLIC;" in sql
+    assert "REVOKE EXECUTE ON FUNCTION public.protect_application_mutation() FROM PUBLIC;" in sql
+    assert "REVOKE EXECUTE ON FUNCTION public.prevent_workflow_history_tampering() FROM PUBLIC;" in sql
+
+
+def load_corrective_migration_sql() -> str:
+    migration_path = Path(__file__).resolve().parents[2] / "supabase" / "migrations" / "20261023000002_module_3_rls_hardening.sql"
+    assert migration_path.exists(), f"Corrective migration file not found at {migration_path}"
+    return migration_path.read_text(encoding="utf-8")
+
+
+def test_corrective_migration_parses_cleanly_with_c_parser():
+    """Verify corrective migration passes native PostgreSQL C parser without syntax errors."""
+    sql = load_corrective_migration_sql()
+    tree = pglast.parse_sql(sql)
+    assert len(tree) >= 30, f"Expected at least 30 statements in corrective migration, got {len(tree)}"
+
+
+def test_corrective_migration_drops_unsafe_policies():
+    """Verify unsafe self-membership and direct history insert policies are explicitly dropped."""
+    sql = load_corrective_migration_sql()
+    assert 'DROP POLICY IF EXISTS "Users can establish self-membership on onboarding" ON public.institution_memberships;' in sql
+    assert 'DROP POLICY IF EXISTS "Insert history on authorized transitions" ON public.application_workflow_history;' in sql
+    assert 'DROP POLICY IF EXISTS "Authenticated users can onboard institutions" ON public.institutions;' in sql
+
+
+def test_corrective_migration_hardens_functions_with_empty_search_path():
+    """Verify all new SECURITY DEFINER functions in corrective migration set search_path = ''."""
+    sql = load_corrective_migration_sql()
+    assert "CREATE OR REPLACE FUNCTION public.protect_institution_mutation()" in sql
+    assert "CREATE OR REPLACE FUNCTION public.handle_new_institution_membership()" in sql
+    assert "CREATE OR REPLACE FUNCTION public.protect_institution_membership_mutation()" in sql
+    assert "CREATE OR REPLACE FUNCTION public.protect_workflow_history_insert()" in sql
+    assert "CREATE OR REPLACE FUNCTION public.execute_statutory_workflow_transition(" in sql
+    assert sql.count("SET search_path = ''") >= 5
+
+
+def test_corrective_migration_atomic_rpc_implements_statutory_state_machine():
+    """Verify execute_statutory_workflow_transition verifies role, transitions state, and inserts history atomically."""
+    sql = load_corrective_migration_sql()
+    assert "FUNCTION public.execute_statutory_workflow_transition(" in sql
+    assert "UPDATE public.applications" in sql
+    assert "INSERT INTO public.application_workflow_history" in sql
+    assert "aicte.workflow_transition_active" in sql
+    assert "REVOKE EXECUTE ON FUNCTION public.execute_statutory_workflow_transition(UUID, public.workflow_status, TEXT, TEXT) FROM PUBLIC;" in sql
+
+
+def test_corrective_migration_least_privilege_grants():
+    """Verify anon has zero access, and authenticated users cannot insert/update history or delete applications."""
+    sql = load_corrective_migration_sql()
+    assert "REVOKE ALL ON public.institutions FROM anon, PUBLIC;" in sql
+    assert "REVOKE ALL ON public.application_workflow_history FROM anon, PUBLIC;" in sql
+    assert "REVOKE INSERT, UPDATE ON public.application_workflow_history FROM authenticated;" in sql
+    assert "REVOKE DELETE ON public.applications FROM authenticated;" in sql
+    assert "REVOKE DELETE ON public.institutions FROM authenticated;" in sql
+
+
+
+

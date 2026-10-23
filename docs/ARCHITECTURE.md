@@ -158,3 +158,168 @@ All protected backend endpoints enforce token verification:
   1. *Local HMAC Secret*: When `SUPABASE_JWT_SECRET` is configured, verifies signatures locally using `pyjwt` with `HS256`, checking expiration (`exp`) and audience (`aud="authenticated"`).
   2. *Supabase Auth API Verification*: When URL and Anon Key are configured, queries `{SUPABASE_URL}/auth/v1/user` asynchronously using `httpx`.
 - **Role Enforcement Dependency (`require_roles`)**: A reusable dependency factory that rejects callers whose role is not authorized with HTTP 403 Forbidden.
+
+---
+
+## 6. Module 3: Core Data Model & Statutory Workflow Architecture
+
+Module 3 provisions the statutory technical institution data model, multi-step application intake wizards, and a state machine implementing the AICTE Approval Process Handbook (APH).
+
+### 6.1 Entity Relationship Diagram
+
+```mermaid
+erDiagram
+    INSTITUTIONS ||--o{ INSTITUTION_MEMBERSHIPS : "associates users"
+    INSTITUTIONS ||--o{ APPLICATIONS : "submits"
+    APPLICATIONS ||--o{ APPLICATION_WORKFLOW_HISTORY : "tracks transitions"
+    AUTH_USERS ||--o{ INSTITUTION_MEMBERSHIPS : "holds membership"
+    AUTH_USERS ||--o{ APPLICATIONS : "creates"
+    AUTH_USERS ||--o{ APPLICATION_WORKFLOW_HISTORY : "acts as"
+
+    INSTITUTIONS {
+        uuid id PK
+        varchar aicte_permanent_id
+        varchar name
+        varchar institution_type
+        varchar state
+        varchar district
+        text address
+        varchar pincode
+        varchar status
+        uuid created_by FK
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    INSTITUTION_MEMBERSHIPS {
+        uuid id PK
+        uuid institution_id FK
+        uuid user_id FK
+        varchar role
+        varchar status
+        timestamptz created_at
+    }
+
+    APPLICATIONS {
+        uuid id PK
+        varchar application_number UK
+        uuid institution_id FK
+        varchar application_type
+        varchar academic_year
+        varchar current_status
+        jsonb form_data
+        uuid created_by FK
+        timestamptz submitted_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    APPLICATION_WORKFLOW_HISTORY {
+        uuid id PK
+        uuid application_id FK
+        varchar previous_status
+        varchar new_status
+        varchar action
+        text transition_notes
+        uuid actor_id FK
+        varchar actor_role
+        timestamptz created_at
+    }
+```
+
+### 6.2 Statutory Workflow State Machine (10 States)
+
+```mermaid
+stateDiagram-v2
+    [*] --> Draft : Applicant creates draft
+    Draft --> Submitted : Formal submission (AICTE Ref generated)
+    Draft --> Withdrawn : Voluntary withdrawal
+
+    Submitted --> RegionalScrutiny : Officer claims case
+    RegionalScrutiny --> DeficiencyResolution : Officer flags deficiency
+    DeficiencyResolution --> RegionalScrutiny : Applicant resubmits with rectification
+
+    RegionalScrutiny --> EVCEvaluation : Documentation cleared; inspection recommended
+    RegionalScrutiny --> SACReview : Clean EoA bypasses physical EVC
+    RegionalScrutiny --> Rejected : Fundamental non-compliance
+
+    EVCEvaluation --> SACReview : EVC inspection report tabled
+    EVCEvaluation --> DeficiencyResolution : Physical non-compliance found
+
+    SACReview --> SHCHearing : Contested cases referred to hearing
+    SACReview --> Approved : Final statutory approval granted
+    SACReview --> Rejected : Final statutory rejection
+
+    SHCHearing --> Approved : Exoneration / compliance upheld
+    SHCHearing --> Rejected : Final rejection confirmed
+
+    Approved --> [*]
+    Rejected --> [*]
+    Withdrawn --> [*]
+```
+
+### 6.3 Security & Immutability Invariants
+1. **Reference Number Immutability**: Once generated (`AICTE-{YEAR}-{TYPE}-{RANDOM}`), the PostgreSQL trigger `protect_application_mutation()` prevents modifying `application_number`, `institution_id`, and `created_by`.
+2. **Append-Only Audit History**: Trigger `prevent_workflow_history_tampering()` blocks `UPDATE` and `DELETE` on `application_workflow_history`.
+3. **Institutional Isolation**: Row Level Security ensures applicant representatives can only inspect or modify applications associated with institutions they have active membership in.
+4. **Authoritative State Transitions**: Transition legality is verified by the statutory state machine engine against authorized regulatory roles (`validate_statutory_transition`).
+
+---
+
+## 7. Module 4: Secure Document Management & Regulatory Evidence Architecture
+
+Module 4 delivers government-grade statutory evidence management, private storage isolation, outbox-pattern durable cleanup, and reviewer verification workflows.
+
+```mermaid
+graph TD
+    subgraph Client Application
+        DocUI[Document Management UI]
+        UploadModal[PDF Upload & Validation]
+        ReviewModal[Regulatory Scrutiny Modal]
+        ChkList[Statutory Checklist Card]
+    end
+
+    subgraph Backend FastAPI
+        DocAPI[Document API Endpoints]
+        PDFValidator[PDF Signature & Structural Validator: pypdf]
+        CompCleaner[Compensating Storage Cleanup]
+        WorkerCLI[Durable Outbox Worker: app.worker]
+    end
+
+    subgraph Supabase Storage
+        PrivBucket[(Private Bucket: aip-application-documents)]
+    end
+
+    subgraph PostgreSQL Database
+        AppDocs[(public.application_documents)]
+        DelQueue[(public.document_storage_deletion_queue)]
+        TrigAudit[tr_protect_document_metadata_mutation]
+        TrigDel[tr_enqueue_document_storage_deletion]
+    end
+
+    DocUI --> UploadModal
+    UploadModal --> DocAPI
+    DocAPI --> PDFValidator
+    PDFValidator --> PrivBucket
+    DocAPI --> AppDocs
+    DocAPI -.->|Compensation on Failure| CompCleaner
+    CompCleaner --> PrivBucket
+    AppDocs --> TrigAudit
+    AppDocs -->|ON DELETE| TrigDel
+    TrigDel --> DelQueue
+    WorkerCLI --> DelQueue
+    WorkerCLI -->|Storage REST API DELETE| PrivBucket
+    ReviewModal --> DocAPI
+    DocAPI --> TrigAudit
+```
+
+### 7.1 Security & Storage Invariants
+1. **Private Storage Isolation**: File binaries reside exclusively in the dedicated, private Supabase Storage bucket `aip-application-documents`. Public bucket access is strictly disabled.
+2. **Path Traversal & Overwrite Protection**: Canonical storage paths are server-generated using the pattern `{application_id}/{uuid}.pdf`. Client-provided filenames, extensions, and paths are sanitized and never trusted as storage keys.
+3. **PDF Structural Integrity & SHA-256 Hashing**: Every upload is verified against the `%PDF-` magic byte signature, parsed with `pypdf` to reject corrupt or 0-page files, limited to 10 MiB, and stamped with an authoritative SHA-256 digest in PostgreSQL.
+4. **Editable Application State Restrictions**: Document uploads and deletions are strictly restricted to applications in `draft` or `deficiency_resolution` status. Once submitted or under regulatory scrutiny, applicant document mutations are rejected.
+5. **Durable Deletion Outbox Pattern**: Document metadata deletions trigger the database function `handle_document_storage_deletion_enqueue()`, which queues the object path in `public.document_storage_deletion_queue`. No direct SQL `DELETE` is ever executed against Supabase `storage.objects`.
+6. **Lease-Based Worker Crash Recovery**: The background worker claims queue items with a time-bounded lease (`lease_expires_at`), recovers abandoned tasks from interrupted workers, executes idempotent Supabase Storage API deletions (treating HTTP 404 as success), and enforces exponential backoff.
+7. **Non-Repudiation in Regulatory Scrutiny**: When regulatory scrutiny officers or administrators verify or flag deficiencies on documents, the database trigger `tr_protect_document_metadata_mutation` automatically stamps `reviewed_by` from caller JWT claims and `reviewed_at` from `pg_catalog.now()`, preventing forged attributions.
+
+

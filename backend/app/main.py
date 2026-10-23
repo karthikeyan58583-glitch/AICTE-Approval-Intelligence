@@ -22,13 +22,20 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Register API v1 router under both /api and /api/v1 for maximum client compatibility
-app.include_router(api_router, prefix=settings.API_V1_STR)
+from app.api.v1.endpoints.health import router as health_router
+
+# Register API v1 router under canonical /api/v1 and backward-compatible /api
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_router, prefix="/api")
+
+# Direct root /health probe for hosting platforms (Render, Kubernetes, Docker)
+app.include_router(health_router, prefix="", tags=["Health"])
+
+
 
 
 @app.get("/", tags=["Root"])

@@ -15,6 +15,8 @@ class UserAuthPayload(BaseModel):
     full_name: Optional[str] = Field(None, description="User full name")
     institution_name: Optional[str] = Field(None, description="Associated institution name")
     regional_office: Optional[str] = Field(None, description="Regional office jurisdiction")
+    access_token: Optional[str] = Field(None, exclude=True, description="Raw JWT for database client forwarding")
+    is_mock: bool = Field(default=False, exclude=True, description="Indicates local mock/test token")
 
 
 class AuthMeResponse(BaseModel):
