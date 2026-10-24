@@ -52,5 +52,5 @@ pnpm-debug.log*
 scratch/
 *.tgz
 *.tar.gz
-
-
+# Agent workspace files
+.agents/
